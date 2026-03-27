@@ -17,6 +17,7 @@ mod task;
 use crate::config::MAX_APP_NUM;
 use crate::loader::{get_num_app, init_app_cx};
 use crate::sync::UPSafeCell;
+use alloc::collections::BTreeMap;
 use lazy_static::*;
 use switch::__switch;
 pub use task::{TaskControlBlock, TaskStatus};
@@ -43,6 +44,8 @@ pub struct TaskManager {
 pub struct TaskManagerInner {
     /// task list
     tasks: [TaskControlBlock; MAX_APP_NUM],
+    /// syscall count keyed by (task_id, syscall_id)
+    syscall_counter: BTreeMap<(usize, usize), usize>,
     /// id of current `Running` task
     current_task: usize,
 }
@@ -64,6 +67,7 @@ lazy_static! {
             inner: unsafe {
                 UPSafeCell::new(TaskManagerInner {
                     tasks,
+                    syscall_counter: BTreeMap::new(),
                     current_task: 0,
                 })
             },
@@ -135,6 +139,23 @@ impl TaskManager {
             panic!("All applications completed!");
         }
     }
+
+    fn record_current_task_syscall(&self, syscall_id: usize) {
+        let mut inner = self.inner.exclusive_access();
+        let key = (inner.current_task, syscall_id);
+        match inner.syscall_counter.get_mut(&key) {
+            Some(counter) => *counter += 1,
+            None => {
+                inner.syscall_counter.insert(key, 1);
+            }
+        };
+    }
+
+    fn current_task_syscall_count(&self, syscall_id: usize) -> isize {
+        let inner = self.inner.exclusive_access();
+        let key = (inner.current_task, syscall_id);
+        inner.syscall_counter.get(&key).copied().unwrap_or(0) as isize
+    }
 }
 
 /// Run the first task in task list.
@@ -168,4 +189,14 @@ pub fn suspend_current_and_run_next() {
 pub fn exit_current_and_run_next() {
     mark_current_exited();
     run_next_task();
+}
+
+/// Record one syscall invocation for current task.
+pub fn record_current_task_syscall(syscall_id: usize) {
+    TASK_MANAGER.record_current_task_syscall(syscall_id)
+}
+
+/// Query syscall invocation count for current task.
+pub fn current_task_syscall_count(syscall_id: usize) -> isize {
+    TASK_MANAGER.current_task_syscall_count(syscall_id)
 }
