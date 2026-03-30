@@ -32,8 +32,27 @@ pub fn sys_yield() -> isize {
 pub fn sys_get_time(ts: *mut TimeVal, _tz: usize) -> isize {
     trace!("kernel: sys_get_time");
     let us = get_time_us();
-    let buf = translated_byte_buffer(current_user_token(), ts as *mut u8, 2);
-    buf.get_mut(0).unwrap() = (us/1_000_000), but[1] = us %1_000_000
+    let buffers = translated_byte_buffer(
+        current_user_token(),
+        ts as *mut u8,
+        core::mem::size_of::<TimeVal>(),
+    );
+    let timeval = TimeVal {
+        sec: us / 1_000_000,
+        usec: us % 1_000_000,
+    };
+    let timeval_bytes = unsafe {
+        core::slice::from_raw_parts(&timeval as *const TimeVal, core::mem::size_of::<TimeVal>())
+    };
+    let mut written = 0;
+    for buf in buffers.iter_mut() {
+        let n = buf.len().min(timeval_bytes.len() - written);
+        buf[..n].copy_from_slice(&timeval_bytes[written..written + n]);
+        written += n;
+        if written == timeval_bytes.len() {
+            break;
+        }
+    }
     0
 }
 
