@@ -17,6 +17,7 @@ mod task;
 use crate::loader::{get_app_data, get_num_app};
 use crate::sync::UPSafeCell;
 use crate::trap::TrapContext;
+use alloc::collections::BTreeMap;
 use alloc::vec::Vec;
 use lazy_static::*;
 use switch::__switch;
@@ -46,6 +47,7 @@ struct TaskManagerInner {
     tasks: Vec<TaskControlBlock>,
     /// id of current `Running` task
     current_task: usize,
+    counts: BTreeMap<(usize, usize), usize>,
 }
 
 lazy_static! {
@@ -64,6 +66,7 @@ lazy_static! {
                 UPSafeCell::new(TaskManagerInner {
                     tasks,
                     current_task: 0,
+                    counts: BTreeMap::new()
                 })
             },
         }
@@ -153,6 +156,28 @@ impl TaskManager {
             panic!("All applications completed!");
         }
     }
+
+    /// Add the counter by the (task_id, syscall_id) key
+    fn add_count(&self, syscall_id: usize) {
+        let mut inner = self.inner.exclusive_access();
+        let key = (inner.current_task, syscall_id);
+        match inner.counts.get_mut(&key) {
+            Some(v) => *v += 1,
+            None => {
+                inner.counts.insert(key, 1);
+            }
+        }
+    }
+
+    /// Get the counter
+    fn get_count(&self, syscall_id: usize) -> isize {
+        let inner = self.inner.exclusive_access();
+        let key = (inner.current_task, syscall_id);
+        match inner.counts.get(&key) {
+            None => 0,
+            Some(v) => *v as isize,
+        }
+    }
 }
 
 /// Run the first task in task list.
@@ -201,4 +226,14 @@ pub fn current_trap_cx() -> &'static mut TrapContext {
 /// Change the current 'Running' task's program break
 pub fn change_program_brk(size: i32) -> Option<usize> {
     TASK_MANAGER.change_current_program_brk(size)
+}
+
+/// Add the syscall_counter
+pub fn add_counter(syscall_id: usize) {
+    TASK_MANAGER.add_count(syscall_id);
+}
+
+/// Get the count from syscall_id
+pub fn get_couter(syscall_id: usize) -> isize {
+    TASK_MANAGER.get_count(syscall_id)
 }
