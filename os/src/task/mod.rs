@@ -237,3 +237,17 @@ pub fn add_counter(syscall_id: usize) {
 pub fn get_couter(syscall_id: usize) -> isize {
     TASK_MANAGER.get_count(syscall_id)
 }
+
+/// Map anonymous pages for the current running task
+pub fn current_mmap(start: usize, len: usize, prot: usize) -> isize {
+    let mut inner = TASK_MANAGER.inner.exclusive_access();
+    let cur = inner.current_task;
+    inner.tasks[cur].mmap(start, len, prot)
+}
+
+/// Unmap anonymous pages for the current running task
+pub fn current_munmap(start: usize, len: usize) -> isize {
+    let mut inner = TASK_MANAGER.inner.exclusive_access();
+    let cur = inner.current_task;
+    inner.tasks[cur].munmap(start, len)
+}

@@ -96,6 +96,16 @@ impl TaskControlBlock {
             None
         }
     }
+
+    /// Use the mmap
+    pub fn mmap(&mut self, start: usize, len: usize, prot: usize) -> isize {
+        self.memory_set.mmap(start, len, prot)
+    }
+
+    /// Use the munmap
+    pub fn munmap(&mut self, start: usize, len: usize) -> isize {
+        self.memory_set.munmap(start, len)
+    }
 }
 
 #[derive(Copy, Clone, PartialEq)]

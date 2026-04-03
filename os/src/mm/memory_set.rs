@@ -262,6 +262,74 @@ impl MemorySet {
             false
         }
     }
+
+    /// Implementation of mmap
+    pub fn mmap(&mut self, start: usize, len: usize, prot: usize) -> isize {
+        if start % PAGE_SIZE != 0 {
+            return -1;
+        }
+        if prot & !0x7 != 0 || prot & 0x7 == 0 {
+            return -1;
+        }
+        if len == 0 {
+            return 0;
+        }
+
+        let page_len = (len + PAGE_SIZE - 1) / PAGE_SIZE * PAGE_SIZE;
+        let end = match start.checked_add(page_len) {
+            Some(v) => v,
+            None => return -1,
+        };
+
+        let start_vpn = VirtAddr::from(start).floor();
+        let end_vpn = VirtAddr::from(end).ceil();
+        for vpn in VPNRange::new(start_vpn, end_vpn) {
+            if self.translate(vpn).map_or(false, |pte| pte.is_valid()) {
+                return -1;
+            }
+        }
+
+        let mut perm = MapPermission::U;
+        if prot & 0b001 != 0 {
+            perm |= MapPermission::R;
+        }
+        if prot & 0b010 != 0 {
+            perm |= MapPermission::W;
+        }
+        if prot & 0b100 != 0 {
+            perm |= MapPermission::X;
+        }
+        self.insert_framed_area(start.into(), end.into(), perm);
+        0
+    }
+
+    /// Implementation of munmap
+    pub fn munmap(&mut self, start: usize, len: usize) -> isize {
+        if len == 0 {
+            return 0;
+        }
+        if start % PAGE_SIZE != 0 || len % PAGE_SIZE != 0 {
+            return -1;
+        }
+        let end = match start.checked_add(len) {
+            Some(v) => v,
+            None => return -1,
+        };
+        let start_vpn = VirtAddr::from(start).floor();
+        let end_vpn = VirtAddr::from(end).ceil();
+        let area_index = match self.areas.iter().position(|area| {
+            area.vpn_range.get_start() == start_vpn && area.vpn_range.get_end() == end_vpn
+        }) {
+            Some(index) => index,
+            None => return -1,
+        };
+        let mut area = self.areas.remove(area_index);
+        area.unmap(&mut self.page_table);
+        unsafe {
+            asm!("sfence.vma");
+        }
+        0
+    }
 }
 /// map area structure, controls a contiguous piece of virtual memory
 pub struct MapArea {
