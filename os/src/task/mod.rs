@@ -115,3 +115,13 @@ lazy_static! {
 pub fn add_initproc() {
     add_task(INITPROC.clone());
 }
+
+/// Abstraction of mmap
+pub fn current_mmap(start: usize, len: usize, prot: usize) -> isize {
+    current_task().unwrap().current_mmap(start, len, prot)
+}
+
+/// Abstraction of munmap
+pub fn current_munmap(start: usize, len: usize) -> isize {
+    current_task().unwrap().current_munmap(start, len)
+}
