@@ -36,6 +36,17 @@ impl TaskControlBlock {
         let inner = self.inner_exclusive_access();
         inner.memory_set.token()
     }
+    /// Abstraction of mmap
+    pub fn current_mmap(&self, start: usize, len: usize, prot: usize) -> isize {
+        self.inner_exclusive_access()
+            .memory_set
+            .mmap(start, len, prot)
+    }
+
+    /// Abstraction of munmap
+    pub fn current_munmap(&self, start: usize, len: usize) -> isize {
+        self.inner_exclusive_access().memory_set.munmap(start, len)
+    }
 }
 
 pub struct TaskControlBlockInner {
