@@ -48,6 +48,8 @@ pub fn suspend_current_and_run_next() {
     drop(task_inner);
     // ---- release current PCB
 
+    task.add_stride(task.pass());
+
     // push back to ready queue.
     add_task(task);
     // jump to scheduling cycle
