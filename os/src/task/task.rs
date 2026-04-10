@@ -254,8 +254,8 @@ impl TaskControlBlock {
                 UPSafeCell::new(TaskControlBlockInner {
                     trap_cx_ppn,
                     base_size: parent_inner.base_size,
-                    priority: 0,
-                    stride: 16,
+                    priority: 16,
+                    stride: 0,
                     task_cx: TaskContext::goto_trap_return(kernel_stack_top),
                     task_status: TaskStatus::Ready,
                     memory_set,
