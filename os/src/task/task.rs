@@ -9,6 +9,8 @@ use alloc::sync::{Arc, Weak};
 use alloc::vec::Vec;
 use core::cell::RefMut;
 
+pub const STRIDE: isize = 998244353;
+
 /// Task control block structure
 ///
 /// Directly save the contents that will not change during running
@@ -45,6 +47,32 @@ impl TaskControlBlock {
     pub fn current_munmap(&self, start: usize, len: usize) -> isize {
         self.inner_exclusive_access().memory_set.munmap(start, len)
     }
+
+    /// Set the priority
+    pub fn set_priority(&self, prio: isize) -> isize {
+        if prio < 2 {
+            return -1;
+        }
+        self.inner_exclusive_access().priority = prio;
+        prio
+    }
+
+    /// Get current stride
+    pub fn get_stride(&self) -> isize {
+        self.inner_exclusive_access().stride
+    }
+
+    /// Add delta to current stride
+    pub fn add_stride(&self, delta: isize) -> isize {
+        let mut inner = self.inner_exclusive_access();
+        inner.stride += delta;
+        inner.stride
+    }
+
+    ///Calculate the pass to be added to stride
+    pub fn pass(&self) -> isize {
+        STRIDE / self.inner_exclusive_access().priority
+    }
 }
 
 pub struct TaskControlBlockInner {
@@ -60,6 +88,12 @@ pub struct TaskControlBlockInner {
 
     /// Maintain the execution status of the current process
     pub task_status: TaskStatus,
+
+    /// The priority
+    pub priority: isize,
+
+    /// The "stride": the process of the task has run
+    pub stride: isize,
 
     /// Application address space
     pub memory_set: MemorySet,
@@ -121,6 +155,8 @@ impl TaskControlBlock {
                 UPSafeCell::new(TaskControlBlockInner {
                     trap_cx_ppn,
                     base_size: user_sp,
+                    priority: 16,
+                    stride: 0,
                     task_cx: TaskContext::goto_trap_return(kernel_stack_top),
                     task_status: TaskStatus::Ready,
                     memory_set,
@@ -194,6 +230,8 @@ impl TaskControlBlock {
                 UPSafeCell::new(TaskControlBlockInner {
                     trap_cx_ppn,
                     base_size: parent_inner.base_size,
+                    priority: 0,
+                    stride: 16,
                     task_cx: TaskContext::goto_trap_return(kernel_stack_top),
                     task_status: TaskStatus::Ready,
                     memory_set,
@@ -246,6 +284,19 @@ impl TaskControlBlock {
         } else {
             None
         }
+    }
+
+    /// Spawn, run a child programme without copying the memset
+    pub fn spawn(self: &Arc<Self>, elf_data: &[u8]) -> Arc<Self> {
+        let task_control_block = Arc::new(TaskControlBlock::new(elf_data));
+
+        // establish parent-child relationship
+        task_control_block.inner_exclusive_access().parent = Some(Arc::downgrade(self));
+        self.inner_exclusive_access()
+            .children
+            .push(task_control_block.clone());
+
+        task_control_block
     }
 }
 
