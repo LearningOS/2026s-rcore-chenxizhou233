@@ -138,6 +138,46 @@ impl Inode {
         )))
         // release efs lock automatically by compiler
     }
+
+    /// The linkage on the device level
+    pub fn link(&self, old_name: &str, new_name: &str) -> isize {
+        let mut fs = self.fs.lock();
+        let op1 = |root_inode: &DiskInode| {
+            // assert it is a directory
+            assert!(root_inode.is_dir());
+            // has the file been created?
+            self.find_inode_id(new_name, root_inode)
+        };
+        let op2 = |root_inode: &DiskInode| {
+            // assert it is a directory
+            assert!(root_inode.is_dir());
+            // has the file been created?
+            self.find_inode_id(old_name, root_inode)
+        };
+        if self.read_disk_inode(op1).is_some() {
+            return -1;
+        }
+        let id = match self.read_disk_inode(op2) {
+            None => return -1,
+            Some(v) => v,
+        };
+        let (block_id, block_offset) = fs.get_disk_inode_pos(id);
+        get_block_cache(block_id as usize, Arc::clone(&self.block_device))
+            .lock()
+            .modify(block_offset, |disk_node: &mut DiskInode| {
+                disk_node.nlink += 1;
+            });
+        self.modify_disk_inode(|disk_node| {
+            let count = disk_node.size as usize;
+            let new_size = (1 + count) * DIRENT_SZ;
+            self.increase_size(new_size as u32, disk_node, &mut fs);
+            let dirent = DirEntry::new(new_name, id);
+            disk_node.write_at(block_offset, dirent.as_bytes(), &self.block_device);
+        });
+        block_cache_sync_all();
+        0
+    }
+
     /// List inodes under current inode
     pub fn ls(&self) -> Vec<String> {
         let _fs = self.fs.lock();
