@@ -11,6 +11,7 @@ use crate::sync::UPSafeCell;
 use alloc::sync::Arc;
 use alloc::vec::Vec;
 use bitflags::*;
+use crate::fs::{Stat, StatMode};
 use easy_fs::{EasyFileSystem, Inode};
 use lazy_static::*;
 
@@ -40,8 +41,7 @@ impl OSInode {
     /// read all data from the inode
     pub fn read_all(&self) -> Vec<u8> {
         let mut inner = self.inner.exclusive_access();
-        let mut buffer: Vec<u8> = Vec::with_capacity(512);
-        buffer.resize(512, 0);
+        let mut buffer: Vec<u8> = alloc::vec![0; 512];
         let mut v: Vec<u8> = Vec::new();
         loop {
             let len = inner.inode.read_at(inner.offset, &mut buffer);
@@ -52,6 +52,21 @@ impl OSInode {
             v.extend_from_slice(&buffer[..len]);
         }
         v
+    }
+    /// Get inode number.
+    pub fn inode_id(&self) -> u32 {
+        let inner = self.inner.exclusive_access();
+        inner.inode.inode_id()
+    }
+    /// Get hard link count.
+    pub fn nlink(&self) -> u32 {
+        let inner = self.inner.exclusive_access();
+        inner.inode.nlink()
+    }
+    /// Whether the inode is a directory.
+    pub fn is_dir(&self) -> bool {
+        let inner = self.inner.exclusive_access();
+        inner.inode.is_dir()
     }
 }
 
@@ -75,8 +90,6 @@ pub fn list_apps() {
 bitflags! {
     ///  The flags argument to the open() system call is constructed by ORing together zero or more of the following values:
     pub struct OpenFlags: u32 {
-        /// readyonly
-        const RDONLY = 0;
         /// writeonly
         const WRONLY = 1 << 0;
         /// read and write
@@ -156,5 +169,13 @@ impl File for OSInode {
             total_write_size += write_size;
         }
         total_write_size
+    }
+    fn stat(&self) -> Stat {
+        let mode = if self.is_dir() {
+            StatMode::DIR
+        } else {
+            StatMode::FILE
+        };
+        Stat::new(0, self.inode_id() as u64, mode, self.nlink())
     }
 }

@@ -55,7 +55,7 @@ pub fn sys_exec(path: *const u8) -> isize {
     trace!("kernel:pid[{}] sys_exec", current_task().unwrap().pid.0);
     let token = current_user_token();
     let path = translated_str(token, path);
-    if let Some(app_inode) = open_file(path.as_str(), OpenFlags::RDONLY) {
+    if let Some(app_inode) = open_file(path.as_str(), OpenFlags::empty()) {
         let all_data = app_inode.read_all();
         let task = current_task().unwrap();
         task.exec(all_data.as_slice());
@@ -180,7 +180,7 @@ pub fn sys_spawn(path: *const u8) -> isize {
     );
     let token = current_user_token();
     let path = translated_str(token, path);
-    if let Some(data) = open_file(path.as_str(), OpenFlags::RDONLY) {
+    if let Some(data) = open_file(path.as_str(), OpenFlags::empty()) {
         let task = current_task().unwrap();
         let new_task = task.spawn(data.read_all().as_slice());
         let new_pid = new_task.pid.0;
