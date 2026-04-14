@@ -49,6 +49,29 @@ pub struct ProcessControlBlockInner {
     pub semaphore_list: Vec<Option<Arc<Semaphore>>>,
     /// condvar list
     pub condvar_list: Vec<Option<Arc<Condvar>>>,
+
+    // ========== TODO: Deadlock Detection Fields ==========
+    /// Enable deadlock detection for this process
+    pub deadlock_detect_enabled: bool,
+
+    /// TODO (框架 1): Resource Availability Vector
+    /// Available[i] = 第 i 个资源还有多少个可用
+    /// 对于 mutex：1 表示可用，0 表示被持有
+    /// 对于 semaphore：数值表示剩余许可证数
+    /// 需要维护的是：mutex_list 和 semaphore_list 里所有资源的可用性
+    pub available: Vec<usize>,
+
+    /// TODO (框架 2): Resource Allocation Matrix
+    /// Allocation[tid][resource_id] = 线程 tid 持有第 resource_id 个资源的个数
+    /// resource_id 的映射：前 mutex_list.len() 个是 mutex，后面是 semaphore
+    /// 行数 = 最大线程数，列数 = mutex_count + semaphore_count
+    pub allocation: Vec<Vec<usize>>,
+
+    /// TODO (框架 3): Resource Need Matrix  
+    /// Need[tid][resource_id] = 线程 tid 再还需要第 resource_id 个资源多少个
+    /// 大小同 allocation
+    /// 当线程请求获取资源时，先在这里更新需求，再做安全性检查
+    pub need: Vec<Vec<usize>>,
 }
 
 impl ProcessControlBlockInner {
@@ -119,6 +142,11 @@ impl ProcessControlBlock {
                     mutex_list: Vec::new(),
                     semaphore_list: Vec::new(),
                     condvar_list: Vec::new(),
+                    // TODO (框架初始化 1): 初始化死锁检测字段
+                    deadlock_detect_enabled: false,
+                    available: Vec::new(),
+                    allocation: Vec::new(),
+                    need: Vec::new(),
                 })
             },
         });
@@ -245,6 +273,10 @@ impl ProcessControlBlock {
                     mutex_list: Vec::new(),
                     semaphore_list: Vec::new(),
                     condvar_list: Vec::new(),
+                    deadlock_detect_enabled: false,
+                    available: Vec::new(),
+                    allocation: Vec::new(),
+                    need: Vec::new(),
                 })
             },
         });
