@@ -314,4 +314,9 @@ impl ProcessControlBlock {
     pub fn getpid(&self) -> usize {
         self.pid.0
     }
+
+    /// Update need for detection
+    pub fn add_need(&self, tid: usize, mutex_id: usize, val: usize) {
+        self.inner_exclusive_access().need[tid][mutex_id] += val
+    }
 }
