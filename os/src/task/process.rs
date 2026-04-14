@@ -11,8 +11,8 @@ use crate::sync::{Condvar, Mutex, Semaphore, UPSafeCell};
 use crate::trap::{trap_handler, TrapContext};
 use alloc::string::String;
 use alloc::sync::{Arc, Weak};
-use alloc::vec;
 use alloc::vec::Vec;
+use alloc::{task, vec};
 use core::cell::RefMut;
 
 /// Process Control Block
@@ -72,6 +72,12 @@ pub struct ProcessControlBlockInner {
     /// 大小同 allocation
     /// 当线程请求获取资源时，先在这里更新需求，再做安全性检查
     pub need: Vec<Vec<usize>>,
+
+    /// The mapping between the check matrix and the mutex
+    pub mutex2rid: Vec<usize>,
+
+    /// The mapping between the check matrix and the semaphore
+    pub sem2rid: Vec<usize>,
 }
 
 impl ProcessControlBlockInner {
@@ -318,5 +324,81 @@ impl ProcessControlBlock {
     /// Update need for detection
     pub fn add_need(&self, tid: usize, mutex_id: usize, val: usize) {
         self.inner_exclusive_access().need[tid][mutex_id] += val
+    }
+
+    /// Initialize the deadlock detection when it is on
+    pub fn initialize(&self) {
+        self.inner_exclusive_access().deadlock_detect_enabled = true;
+        let mut_len = self.inner_exclusive_access().mutex_list.len();
+        let sema_len = self.inner_exclusive_access().semaphore_list.len();
+        let m = mut_len + sema_len;
+        let task_cnt = self.inner_exclusive_access().tasks.len();
+        // Initialize the available
+        self.inner_exclusive_access().available = vec![1, m];
+        for id in mut_len..m {
+            self.inner_exclusive_access().available[id] =
+                self.inner_exclusive_access().semaphore_list[id - mut_len]
+                    .unwrap()
+                    .get_count() as usize;
+        }
+        // Initialize the mapping
+        self.inner_exclusive_access()
+            .mutex2rid
+            .iter()
+            .enumerate()
+            .map(|(id, _)| id);
+        self.inner_exclusive_access()
+            .sem2rid
+            .iter()
+            .enumerate()
+            .map(|(id, _)| id);
+        // Initialize the matrix
+        self.inner_exclusive_access().allocation = vec![vec![0usize; task_cnt]; m];
+        self.inner_exclusive_access().need = vec![vec![0usize; task_cnt]; m];
+    }
+
+    /// Extend the resource when new mutex created
+    pub fn new_mutex_added(&self) {
+        let mut_len = self.inner_exclusive_access().mutex_list.len();
+        let sema_len = self.inner_exclusive_access().semaphore_list.len();
+        let m = mut_len + sema_len;
+        self.inner_exclusive_access().available.push(1);
+        // Update the mapping and update the matrix
+        self.inner_exclusive_access().mutex2rid.push(m - 1);
+        self.inner_exclusive_access()
+            .allocation
+            .iter
+            .map(|v| v.push(0));
+        self.inner_exclusive_access().need.iter.map(|v| v.push(0));
+    }
+
+    /// Extend the resource when new semaphore created
+    pub fn new_sem_added(&self, cnt: usize) {
+        let mut_len = self.inner_exclusive_access().mutex_list.len();
+        let sema_len = self.inner_exclusive_access().semaphore_list.len();
+        let m = mut_len + sema_len;
+        self.inner_exclusive_access().available.push(cnt);
+        // Update the mapping and update the matrix
+        self.inner_exclusive_access().sem2rid.push(m - 1);
+        self.inner_exclusive_access()
+            .allocation
+            .iter
+            .map(|v| v.push(0));
+        self.inner_exclusive_access().need.iter.map(|v| v.push(0));
+    }
+
+    /// Extend when new thread is added
+    pub fn new_process_added(&self, tid: usize) {
+        let mut_len = self.inner_exclusive_access().mutex_list.len();
+        let sema_len = self.inner_exclusive_access().semaphore_list.len();
+        let m = mut_len + sema_len;
+        while self.inner_exclusive_access().allocation.len() < tid + 1 {
+            self.inner_exclusive_access()
+                .allocation
+                .push(vec![0usize; m]);
+        }
+        while self.inner_exclusive_access().need.len() < tid + 1 {
+            self.inner_exclusive_access().need.push(vec![0usize; m]);
+        }
     }
 }

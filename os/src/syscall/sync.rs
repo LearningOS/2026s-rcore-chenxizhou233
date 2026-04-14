@@ -89,6 +89,7 @@ pub fn sys_mutex_create(blocking: bool) -> isize {
         id as isize
     } else {
         process_inner.mutex_list.push(mutex);
+        process.new_mutex_added();
         process_inner.mutex_list.len() as isize - 1
     }
 }
@@ -115,6 +116,8 @@ pub fn sys_mutex_lock(mutex_id: usize) -> isize {
     // 3. 调用 deadlock_detect() 检查系统是否会进入不安全状态
     // 4. 如果检测返回不安全（-0xDEAD），就直接返回 -0xDEAD，不获取锁
     // 5. 如果安全或检测禁用，继续正常逻辑：获取锁后，Allocation[tid][mutex_id] += 1，Need[tid][mutex_id] -= 1
+    if process_inner.deadlock_detect_enabled {}
+
     drop(process_inner);
     drop(process);
     mutex.lock();
@@ -169,6 +172,7 @@ pub fn sys_semaphore_create(res_count: usize) -> isize {
         process_inner
             .semaphore_list
             .push(Some(Arc::new(Semaphore::new(res_count))));
+        process.new_sem_added(res_count);
         process_inner.semaphore_list.len() - 1
     };
     id as isize
