@@ -50,33 +50,18 @@ pub struct ProcessControlBlockInner {
     /// condvar list
     pub condvar_list: Vec<Option<Arc<Condvar>>>,
 
-    // ========== TODO: Deadlock Detection Fields ==========
+    // ========== Deadlock Detection Fields ==========
     /// Enable deadlock detection for this process
     pub deadlock_detect_enabled: bool,
-
-    /// TODO (框架 1): Resource Availability Vector
     /// Available[i] = 第 i 个资源还有多少个可用
-    /// 对于 mutex：1 表示可用，0 表示被持有
-    /// 对于 semaphore：数值表示剩余许可证数
-    /// 需要维护的是：mutex_list 和 semaphore_list 里所有资源的可用性
     pub available: Vec<usize>,
-
-    /// TODO (框架 2): Resource Allocation Matrix
-    /// Allocation[tid][resource_id] = 线程 tid 持有第 resource_id 个资源的个数
-    /// resource_id 的映射：前 mutex_list.len() 个是 mutex，后面是 semaphore
-    /// 行数 = 最大线程数，列数 = mutex_count + semaphore_count
+    /// Allocation[tid][resource_id] = tid 持有第 resource_id 个资源的个数
     pub allocation: Vec<Vec<usize>>,
-
-    /// TODO (框架 3): Resource Need Matrix  
-    /// Need[tid][resource_id] = 线程 tid 再还需要第 resource_id 个资源多少个
-    /// 大小同 allocation
-    /// 当线程请求获取资源时，先在这里更新需求，再做安全性检查
+    /// Need[tid][resource_id] = tid 还需要第 resource_id 个资源的个数
     pub need: Vec<Vec<usize>>,
-
-    /// The mapping between the check matrix and the mutex
+    /// mutex_id -> resource_id
     pub mutex2rid: Vec<usize>,
-
-    /// The mapping between the check matrix and the semaphore
+    /// semaphore_id -> resource_id
     pub sem2rid: Vec<usize>,
 }
 
@@ -148,11 +133,12 @@ impl ProcessControlBlock {
                     mutex_list: Vec::new(),
                     semaphore_list: Vec::new(),
                     condvar_list: Vec::new(),
-                    // TODO (框架初始化 1): 初始化死锁检测字段
                     deadlock_detect_enabled: false,
                     available: Vec::new(),
                     allocation: Vec::new(),
                     need: Vec::new(),
+                    mutex2rid: Vec::new(),
+                    sem2rid: Vec::new(),
                 })
             },
         });
@@ -283,6 +269,8 @@ impl ProcessControlBlock {
                     available: Vec::new(),
                     allocation: Vec::new(),
                     need: Vec::new(),
+                    mutex2rid: Vec::new(),
+                    sem2rid: Vec::new(),
                 })
             },
         });
@@ -321,84 +309,76 @@ impl ProcessControlBlock {
         self.pid.0
     }
 
-    /// Update need for detection
-    pub fn add_need(&self, tid: usize, mutex_id: usize, val: usize) {
-        self.inner_exclusive_access().need[tid][mutex_id] += val
-    }
-
-    /// Initialize the deadlock detection when it is on
+    /// Enable deadlock detection and initialize resource tables.
     pub fn initialize(&self) {
-        self.inner_exclusive_access().deadlock_detect_enabled = true;
-        let mut_len = self.inner_exclusive_access().mutex_list.len();
-        let sema_len = self.inner_exclusive_access().semaphore_list.len();
-        let m = mut_len + sema_len;
-        let task_cnt = self.inner_exclusive_access().tasks.len();
-        // Initialize the available
-        self.inner_exclusive_access().available = vec![1, m];
-        for id in mut_len..m {
-            self.inner_exclusive_access().available[id] =
-                self.inner_exclusive_access().semaphore_list[id - mut_len]
-                    .unwrap()
-                    .get_count() as usize;
+        let mut process_inner = self.inner_exclusive_access();
+        process_inner.deadlock_detect_enabled = true;
+
+        let mutex_count = process_inner.mutex_list.len();
+        let semaphore_count = process_inner.semaphore_list.len();
+        let resource_count = mutex_count + semaphore_count;
+        let task_count = process_inner.tasks.len();
+
+        process_inner.available = vec![0; resource_count];
+        for rid in 0..mutex_count {
+            process_inner.available[rid] = 1;
         }
-        // Initialize the mapping
-        self.inner_exclusive_access()
-            .mutex2rid
-            .iter()
-            .enumerate()
-            .map(|(id, _)| id);
-        self.inner_exclusive_access()
-            .sem2rid
-            .iter()
-            .enumerate()
-            .map(|(id, _)| id);
-        // Initialize the matrix
-        self.inner_exclusive_access().allocation = vec![vec![0usize; task_cnt]; m];
-        self.inner_exclusive_access().need = vec![vec![0usize; task_cnt]; m];
+        for sem_id in 0..semaphore_count {
+            let semaphore = process_inner.semaphore_list[sem_id]
+                .as_ref()
+                .unwrap()
+                .clone();
+            process_inner.available[mutex_count + sem_id] =
+                semaphore.inner.exclusive_access().count as usize;
+        }
+
+        process_inner.mutex2rid = (0..mutex_count).collect();
+        process_inner.sem2rid = (mutex_count..resource_count).collect();
+
+        process_inner.allocation = vec![vec![0; resource_count]; task_count];
+        process_inner.need = vec![vec![0; resource_count]; task_count];
     }
 
-    /// Extend the resource when new mutex created
+    /// Extend resource tables when a new mutex is created.
     pub fn new_mutex_added(&self) {
-        let mut_len = self.inner_exclusive_access().mutex_list.len();
-        let sema_len = self.inner_exclusive_access().semaphore_list.len();
-        let m = mut_len + sema_len;
-        self.inner_exclusive_access().available.push(1);
-        // Update the mapping and update the matrix
-        self.inner_exclusive_access().mutex2rid.push(m - 1);
-        self.inner_exclusive_access()
-            .allocation
-            .iter
-            .map(|v| v.push(0));
-        self.inner_exclusive_access().need.iter.map(|v| v.push(0));
-    }
+        let mut process_inner = self.inner_exclusive_access();
+        let rid = process_inner.available.len();
 
-    /// Extend the resource when new semaphore created
-    pub fn new_sem_added(&self, cnt: usize) {
-        let mut_len = self.inner_exclusive_access().mutex_list.len();
-        let sema_len = self.inner_exclusive_access().semaphore_list.len();
-        let m = mut_len + sema_len;
-        self.inner_exclusive_access().available.push(cnt);
-        // Update the mapping and update the matrix
-        self.inner_exclusive_access().sem2rid.push(m - 1);
-        self.inner_exclusive_access()
-            .allocation
-            .iter
-            .map(|v| v.push(0));
-        self.inner_exclusive_access().need.iter.map(|v| v.push(0));
-    }
-
-    /// Extend when new thread is added
-    pub fn new_process_added(&self, tid: usize) {
-        let mut_len = self.inner_exclusive_access().mutex_list.len();
-        let sema_len = self.inner_exclusive_access().semaphore_list.len();
-        let m = mut_len + sema_len;
-        while self.inner_exclusive_access().allocation.len() < tid + 1 {
-            self.inner_exclusive_access()
-                .allocation
-                .push(vec![0usize; m]);
+        process_inner.available.push(1);
+        process_inner.mutex2rid.push(rid);
+        for row in process_inner.allocation.iter_mut() {
+            row.push(0);
         }
-        while self.inner_exclusive_access().need.len() < tid + 1 {
-            self.inner_exclusive_access().need.push(vec![0usize; m]);
+        for row in process_inner.need.iter_mut() {
+            row.push(0);
+        }
+    }
+
+    /// Extend resource tables when a new semaphore is created.
+    pub fn new_sem_added(&self, cnt: usize) {
+        let mut process_inner = self.inner_exclusive_access();
+        let rid = process_inner.available.len();
+
+        process_inner.available.push(cnt);
+        process_inner.sem2rid.push(rid);
+        for row in process_inner.allocation.iter_mut() {
+            row.push(0);
+        }
+        for row in process_inner.need.iter_mut() {
+            row.push(0);
+        }
+    }
+
+    /// Extend thread tables when a new thread is added.
+    pub fn new_process_added(&self, tid: usize) {
+        let mut process_inner = self.inner_exclusive_access();
+        let resource_count = process_inner.available.len();
+
+        while process_inner.allocation.len() < tid + 1 {
+            process_inner.allocation.push(vec![0; resource_count]);
+        }
+        while process_inner.need.len() < tid + 1 {
+            process_inner.need.push(vec![0; resource_count]);
         }
     }
 }
