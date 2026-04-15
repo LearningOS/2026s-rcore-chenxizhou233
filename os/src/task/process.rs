@@ -11,8 +11,8 @@ use crate::sync::{Condvar, Mutex, Semaphore, UPSafeCell};
 use crate::trap::{trap_handler, TrapContext};
 use alloc::string::String;
 use alloc::sync::{Arc, Weak};
+use alloc::vec;
 use alloc::vec::Vec;
-use alloc::{task, vec};
 use core::cell::RefMut;
 
 /// Process Control Block
