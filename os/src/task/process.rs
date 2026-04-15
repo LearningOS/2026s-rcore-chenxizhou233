@@ -49,6 +49,18 @@ pub struct ProcessControlBlockInner {
     pub semaphore_list: Vec<Option<Arc<Semaphore>>>,
     /// condvar list
     pub condvar_list: Vec<Option<Arc<Condvar>>>,
+    /// Enable deadlock detection for this process
+    pub deadlock_detect_enabled: bool,
+    /// Available[i] = 第 i 个资源还有多少个可用
+    pub available: Vec<usize>,
+    /// Allocation[tid][resource_id] = tid 持有第 resource_id 个资源的个数
+    pub allocation: Vec<Vec<usize>>,
+    /// Need[tid][resource_id] = tid 还需要第 resource_id 个资源的个数
+    pub need: Vec<Vec<usize>>,
+    /// mutex_id -> resource_id
+    pub mutex2rid: Vec<usize>,
+    /// semaphore_id -> resource_id
+    pub sem2rid: Vec<usize>,
 }
 
 impl ProcessControlBlockInner {
@@ -119,6 +131,12 @@ impl ProcessControlBlock {
                     mutex_list: Vec::new(),
                     semaphore_list: Vec::new(),
                     condvar_list: Vec::new(),
+                    deadlock_detect_enabled: false,
+                    available: Vec::new(),
+                    allocation: Vec::new(),
+                    need: Vec::new(),
+                    mutex2rid: Vec::new(),
+                    sem2rid: Vec::new(),
                 })
             },
         });
@@ -245,6 +263,12 @@ impl ProcessControlBlock {
                     mutex_list: Vec::new(),
                     semaphore_list: Vec::new(),
                     condvar_list: Vec::new(),
+                    deadlock_detect_enabled: false,
+                    available: Vec::new(),
+                    allocation: Vec::new(),
+                    need: Vec::new(),
+                    mutex2rid: Vec::new(),
+                    sem2rid: Vec::new(),
                 })
             },
         });
@@ -281,5 +305,76 @@ impl ProcessControlBlock {
     /// get pid
     pub fn getpid(&self) -> usize {
         self.pid.0
+    }
+    pub fn initialize(&self) {
+        let mut process_inner = self.inner_exclusive_access();
+        process_inner.deadlock_detect_enabled = true;
+
+        let mutex_count = process_inner.mutex_list.len();
+        let semaphore_count = process_inner.semaphore_list.len();
+        let resource_count = mutex_count + semaphore_count;
+        let task_count = process_inner.tasks.len();
+
+        process_inner.available = vec![0; resource_count];
+        for rid in 0..mutex_count {
+            process_inner.available[rid] = 1;
+        }
+        for sem_id in 0..semaphore_count {
+            let semaphore = process_inner.semaphore_list[sem_id]
+                .as_ref()
+                .unwrap()
+                .clone();
+            process_inner.available[mutex_count + sem_id] =
+                semaphore.inner.exclusive_access().count as usize;
+        }
+
+        process_inner.mutex2rid = (0..mutex_count).collect();
+        process_inner.sem2rid = (mutex_count..resource_count).collect();
+
+        process_inner.allocation = vec![vec![0; resource_count]; task_count];
+        process_inner.need = vec![vec![0; resource_count]; task_count];
+    }
+
+    /// Extend resource tables when a new mutex is created.
+    pub fn new_mutex_added(&self) {
+        let mut process_inner = self.inner_exclusive_access();
+        let rid = process_inner.available.len();
+
+        process_inner.available.push(1);
+        process_inner.mutex2rid.push(rid);
+        for row in process_inner.allocation.iter_mut() {
+            row.push(0);
+        }
+        for row in process_inner.need.iter_mut() {
+            row.push(0);
+        }
+    }
+
+    /// Extend resource tables when a new semaphore is created.
+    pub fn new_sem_added(&self, cnt: usize) {
+        let mut process_inner = self.inner_exclusive_access();
+        let rid = process_inner.available.len();
+
+        process_inner.available.push(cnt);
+        process_inner.sem2rid.push(rid);
+        for row in process_inner.allocation.iter_mut() {
+            row.push(0);
+        }
+        for row in process_inner.need.iter_mut() {
+            row.push(0);
+        }
+    }
+
+    /// Extend thread tables when a new thread is added.
+    pub fn new_process_added(&self, tid: usize) {
+        let mut process_inner = self.inner_exclusive_access();
+        let resource_count = process_inner.available.len();
+
+        while process_inner.allocation.len() < tid + 1 {
+            process_inner.allocation.push(vec![0; resource_count]);
+        }
+        while process_inner.need.len() < tid + 1 {
+            process_inner.need.push(vec![0; resource_count]);
+        }
     }
 }
