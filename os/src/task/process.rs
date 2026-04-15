@@ -49,8 +49,6 @@ pub struct ProcessControlBlockInner {
     pub semaphore_list: Vec<Option<Arc<Semaphore>>>,
     /// condvar list
     pub condvar_list: Vec<Option<Arc<Condvar>>>,
-
-    // ========== Deadlock Detection Fields ==========
     /// Enable deadlock detection for this process
     pub deadlock_detect_enabled: bool,
     /// Available[i] = 第 i 个资源还有多少个可用
@@ -308,8 +306,6 @@ impl ProcessControlBlock {
     pub fn getpid(&self) -> usize {
         self.pid.0
     }
-
-    /// Enable deadlock detection and initialize resource tables.
     pub fn initialize(&self) {
         let mut process_inner = self.inner_exclusive_access();
         process_inner.deadlock_detect_enabled = true;
